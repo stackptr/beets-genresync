@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "beets-genresync"
+version = "0.1.0"
+description = "beets plugin that syncs album genres from MusicBrainz and Discogs"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "beets>=2.0.0",
+    "musicbrainzngs>=0.7.1",
+    "requests>=2.28",
+]
+
+[tool.setuptools.packages.find]
+include = ["beetsplug*"]
+namespaces = true
