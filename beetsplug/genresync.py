@@ -20,7 +20,6 @@ class GenreSyncPlugin(BeetsPlugin):
             {
                 "auto": True,
                 "discogs_token": None,
-                "separator": "; ",
             }
         )
         self._last_mb_request = 0.0
@@ -68,21 +67,20 @@ class GenreSyncPlugin(BeetsPlugin):
             self._log.info("{0}: no genre data found", album)
             return
 
-        new_value = self.config["separator"].get(str).join(merged)
-        old_value = album.genres or ""
-        if new_value == old_value:
+        old_value = list(album.genres or [])
+        if merged == old_value:
             self._log.debug("{0}: genres unchanged", album)
             return
 
         if dry_run:
-            print_(f"{album}: {old_value!r} -> {new_value!r}")
+            print_(f"{album}: {'; '.join(old_value)!r} -> {'; '.join(merged)!r}")
             return
 
-        self._log.info("{0}: {1!r} -> {2!r}", album, old_value, new_value)
-        album.genres = new_value
+        self._log.info("{0}: {1!r} -> {2!r}", album, old_value, merged)
+        album.genres = merged
         album.store()
         for item in album.items():
-            item.genres = new_value
+            item.genres = merged
             item.store()
             item.try_write()
 

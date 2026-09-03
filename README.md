@@ -20,7 +20,6 @@ existing `discogs_albumid`. An album with neither ID produces no genres.
 genresync:
     auto: yes          # sync genres automatically after `beet import`
     discogs_token: ""  # optional; unauthenticated requests are rate-limited more heavily
-    separator: "; "    # separator used when joining merged genres
 ```
 
 ## Usage
