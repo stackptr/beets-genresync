@@ -10,7 +10,6 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 dependencies = [
-    "beets>=2.0.0",
     "musicbrainzngs>=0.7.1",
     "requests>=2.28",
 ]
