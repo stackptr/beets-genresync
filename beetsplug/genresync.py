@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import time
 from typing import Iterable
 
-import musicbrainzngs
 import requests
 from beets.plugins import BeetsPlugin
 from beets.ui import Subcommand, decargs, print_
 
 DISCOGS_RELEASE_URL = "https://api.discogs.com/releases/{release_id}"
-USER_AGENT = "beets-genresync/0.1 +https://github.com/stackptr/beets-genresync"
+MUSICBRAINZ_URL = "https://musicbrainz.org/ws/2/{entity}/{mbid}"
+MUSICBRAINZ_MIN_INTERVAL = 1.0
+USER_AGENT = "beets-genresync/0.1 ( https://github.com/stackptr/beets-genresync )"
 
 
 class GenreSyncPlugin(BeetsPlugin):
@@ -21,6 +23,7 @@ class GenreSyncPlugin(BeetsPlugin):
                 "separator": "; ",
             }
         )
+        self._last_mb_request = 0.0
         self.register_listener("album_imported", self.album_imported)
 
     def album_imported(self, lib, album):
@@ -92,18 +95,25 @@ class GenreSyncPlugin(BeetsPlugin):
         return self._dedupe(name.title() for name in names)
 
     def _mb_genre_names(self, entity: str, mbid: str) -> list[str]:
+        wait = MUSICBRAINZ_MIN_INTERVAL - (time.monotonic() - self._last_mb_request)
+        if wait > 0:
+            time.sleep(wait)
+
         try:
-            if entity == "release":
-                result = musicbrainzngs.get_release_by_id(mbid, includes=["genres"])
-                genre_list = result.get("release", {}).get("genre-list", [])
-            else:
-                result = musicbrainzngs.get_release_group_by_id(
-                    mbid, includes=["genres"]
-                )
-                genre_list = result.get("release-group", {}).get("genre-list", [])
-        except musicbrainzngs.WebServiceError as exc:
-            self._log.warning("MusicBrainz {0} lookup failed: {1}", mbid, exc)
+            response = requests.get(
+                MUSICBRAINZ_URL.format(entity=entity, mbid=mbid),
+                params={"inc": "genres", "fmt": "json"},
+                headers={"User-Agent": USER_AGENT},
+                timeout=10,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            self._log.warning("MusicBrainz {0} {1} lookup failed: {2}", entity, mbid, exc)
             return []
+        finally:
+            self._last_mb_request = time.monotonic()
+
+        genre_list = response.json().get("genres", [])
         return [g["name"] for g in genre_list if g.get("name")]
 
     def _discogs_genres(self, album) -> tuple[list[str], list[str]]:
