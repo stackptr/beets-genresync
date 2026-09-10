@@ -110,6 +110,11 @@ class GenreSyncPlugin(BeetsPlugin):
                 )
             except requests.RequestException as exc:
                 self._last_mb_request = time.monotonic()
+                # Connection-level failures (timeouts, resets) are just as
+                # transient as a 503 response, so retry them the same way.
+                if attempt < MUSICBRAINZ_MAX_RETRIES:
+                    time.sleep(2**attempt)
+                    continue
                 self._log.warning(
                     "MusicBrainz {0} {1} lookup failed: {2}", entity, mbid, exc
                 )
