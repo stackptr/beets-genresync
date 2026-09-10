@@ -2,7 +2,8 @@
 
 A [beets](https://beets.io) plugin that populates album genres from two sources:
 
-- **MusicBrainz** genre votes (release and release-group level)
+- **MusicBrainz** genre votes (release-group level, falling back to the
+  specific release only if the release-group has none)
 - **Discogs** `genre` (broad) and `style` (specific) fields, via the release's stored `discogs_albumid`
 
 Results from both sources are merged and deduplicated (case-insensitively) into

@@ -87,10 +87,10 @@ class GenreSyncPlugin(BeetsPlugin):
 
     def _musicbrainz_genres(self, album) -> list[str]:
         names: list[str] = []
-        if album.mb_albumid:
-            names += self._mb_genre_names("release", album.mb_albumid)
         if album.mb_releasegroupid:
-            names += self._mb_genre_names("release-group", album.mb_releasegroupid)
+            names = self._mb_genre_names("release-group", album.mb_releasegroupid)
+        if not names and album.mb_albumid:
+            names = self._mb_genre_names("release", album.mb_albumid)
         return self._dedupe(name.title() for name in names)
 
     def _mb_genre_names(self, entity: str, mbid: str) -> list[str]:
