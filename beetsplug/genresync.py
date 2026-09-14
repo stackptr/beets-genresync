@@ -74,7 +74,7 @@ class GenreSyncPlugin(BeetsPlugin):
             return
 
         old_value = list(album.genres or [])
-        if merged == old_value:
+        if set(merged) == set(old_value):
             self._log.debug("{0}: genres unchanged", album)
             return
 
