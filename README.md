@@ -42,3 +42,15 @@ beet genresync
 # Sync a specific query
 beet genresync albumartist:Boards of Canada
 ```
+
+## Testing
+
+```sh
+pip install .[test]
+pytest
+```
+
+Tests use `beets.test.helper.PluginTestHelper` for isolated library/config
+fixtures and `responses` to mock MusicBrainz/Discogs HTTP calls -- no network
+access or real library required. CI (`.github/workflows/test.yml`) runs the
+suite on every push and pull request.
