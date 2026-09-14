@@ -7,6 +7,9 @@ A [beets](https://beets.io) plugin that populates album genres from two sources:
 
 Results from both sources are merged and deduplicated (case-insensitively) into
 the album's `genres` field, then written to both the library and the file tags.
+File modification time is preserved by default (see `update_mtime` below), so
+genre-only syncs don't trip "recently added" sorting in media servers that key
+off `mtime`.
 
 ## Requirements
 
@@ -20,6 +23,7 @@ existing `discogs_albumid`. An album with neither ID produces no genres.
 genresync:
     auto: yes          # sync genres automatically after `beet import`
     discogs_token: ""  # optional; unauthenticated requests are rate-limited more heavily
+    update_mtime: no   # if yes, let genre-only writes bump the file's mtime as usual
 ```
 
 ## Usage

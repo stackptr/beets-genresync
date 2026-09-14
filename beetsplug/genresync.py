@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from typing import Iterable
 
@@ -21,6 +22,7 @@ class GenreSyncPlugin(BeetsPlugin):
             {
                 "auto": True,
                 "discogs_token": None,
+                "update_mtime": False,
             }
         )
         self._last_mb_request = 0.0
@@ -60,12 +62,15 @@ class GenreSyncPlugin(BeetsPlugin):
             self.sync_album(album, dry_run=opts.dry_run)
 
     def sync_album(self, album, dry_run=False):
-        mb_genres = self._musicbrainz_genres(album)
-        discogs_broad, discogs_specific = self._discogs_genres(album)
+        mb_genres, mb_ok = self._musicbrainz_genres(album)
+        discogs_broad, discogs_specific, discogs_ok = self._discogs_genres(album)
 
         merged = self._dedupe([*discogs_broad, *mb_genres, *discogs_specific])
         if not merged:
-            self._log.info("{0}: no genre data found", album)
+            if mb_ok and discogs_ok:
+                self._log.info("{0}: no genre data found", album)
+            else:
+                self._log.warning("{0}: skipping, genre lookup failed", album)
             return
 
         old_value = list(album.genres or [])
@@ -78,22 +83,35 @@ class GenreSyncPlugin(BeetsPlugin):
             return
 
         self._log.info("{0}: {1!r} -> {2!r}", album, old_value, merged)
+        update_mtime = self.config["update_mtime"].get(bool)
         album.genres = merged
         album.store()
         for item in album.items():
+            stat = None if update_mtime else os.stat(item.path)
             item.genres = merged
             item.store()
             item.try_write()
+            if stat is not None:
+                os.utime(item.path, (stat.st_atime, stat.st_mtime))
 
-    def _musicbrainz_genres(self, album) -> list[str]:
+    def _musicbrainz_genres(self, album) -> tuple[list[str], bool]:
         names: list[str] = []
+        ok = True
         if album.mb_albumid:
-            names += self._mb_genre_names("release", album.mb_albumid)
+            release_names, release_ok = self._mb_genre_names(
+                "release", album.mb_albumid
+            )
+            names += release_names
+            ok = ok and release_ok
         if album.mb_releasegroupid:
-            names += self._mb_genre_names("release-group", album.mb_releasegroupid)
-        return self._dedupe(name.title() for name in names)
+            rg_names, rg_ok = self._mb_genre_names(
+                "release-group", album.mb_releasegroupid
+            )
+            names += rg_names
+            ok = ok and rg_ok
+        return self._dedupe(name.title() for name in names), ok
 
-    def _mb_genre_names(self, entity: str, mbid: str) -> list[str]:
+    def _mb_genre_names(self, entity: str, mbid: str) -> tuple[list[str], bool]:
         url = MUSICBRAINZ_URL.format(entity=entity, mbid=mbid)
 
         for attempt in range(MUSICBRAINZ_MAX_RETRIES + 1):
@@ -118,7 +136,7 @@ class GenreSyncPlugin(BeetsPlugin):
                 self._log.warning(
                     "MusicBrainz {0} {1} lookup failed: {2}", entity, mbid, exc
                 )
-                return []
+                return [], False
 
             self._last_mb_request = time.monotonic()
 
@@ -135,17 +153,17 @@ class GenreSyncPlugin(BeetsPlugin):
                 self._log.warning(
                     "MusicBrainz {0} {1} lookup failed: {2}", entity, mbid, exc
                 )
-                return []
+                return [], False
 
             genre_list = response.json().get("genres", [])
-            return [g["name"] for g in genre_list if g.get("name")]
+            return [g["name"] for g in genre_list if g.get("name")], True
 
-        return []
+        return [], False
 
-    def _discogs_genres(self, album) -> tuple[list[str], list[str]]:
+    def _discogs_genres(self, album) -> tuple[list[str], list[str], bool]:
         release_id = album.discogs_albumid
         if not release_id:
-            return [], []
+            return [], [], True
 
         params = {}
         token = self.config["discogs_token"].get()
@@ -162,10 +180,10 @@ class GenreSyncPlugin(BeetsPlugin):
             response.raise_for_status()
         except requests.RequestException as exc:
             self._log.warning("Discogs release {0} lookup failed: {1}", release_id, exc)
-            return [], []
+            return [], [], False
 
         data = response.json()
-        return list(data.get("genres") or []), list(data.get("styles") or [])
+        return list(data.get("genres") or []), list(data.get("styles") or []), True
 
     @staticmethod
     def _dedupe(values: Iterable[str]) -> list[str]:
