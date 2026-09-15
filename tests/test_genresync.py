@@ -20,6 +20,10 @@ def mb_body(*names):
     return {"genres": [{"name": n} for n in names]}
 
 
+def mb_body_with_counts(*name_counts):
+    return {"genres": [{"name": n, "count": c} for n, c in name_counts]}
+
+
 def discogs_body(genres=None, styles=None):
     return {"genres": genres or [], "styles": styles or []}
 
@@ -87,6 +91,37 @@ class TestGenreSync(PluginTestHelper):
         names, _ = self.genresync._musicbrainz_genres(album)
 
         assert names == ["IDM"]
+
+    @responses.activate
+    def test_musicbrainz_ranks_by_vote_count(self):
+        responses.add(
+            responses.GET,
+            MB_RELEASE_GROUP.format("rg-1"),
+            json=mb_body_with_counts(("rock", 2), ("electronic", 10), ("pop", 5)),
+        )
+        album = self.add_album(mb_releasegroupid="rg-1")
+
+        names, ok = self.genresync._musicbrainz_genres(album)
+
+        assert ok is True
+        assert names == ["Electronic", "Pop", "Rock"]
+
+    @responses.activate
+    def test_musicbrainz_caps_to_top_15_by_vote_count(self):
+        entries = [(f"genre{i}", i) for i in range(1, 21)]  # counts 1..20
+        responses.add(
+            responses.GET,
+            MB_RELEASE_GROUP.format("rg-1"),
+            json=mb_body_with_counts(*entries),
+        )
+        album = self.add_album(mb_releasegroupid="rg-1")
+
+        names, ok = self.genresync._musicbrainz_genres(album)
+
+        assert len(names) == 15
+        assert names[0] == "Genre20"
+        assert "Genre6" in names
+        assert "Genre5" not in names
 
     @responses.activate
     def test_musicbrainz_retries_503_then_succeeds(self):
@@ -204,6 +239,35 @@ class TestGenreSync(PluginTestHelper):
         self.genresync.sync_album(album)
 
         assert any("genres unchanged" in r.message for r in caplog.records)
+
+    @responses.activate
+    def test_sync_album_discogs_stays_uncapped_when_mb_is_capped(self, monkeypatch):
+        mb_entries = [(f"mbgenre{i}", i) for i in range(1, 21)]  # counts 1..20
+        responses.add(
+            responses.GET,
+            MB_RELEASE_GROUP.format("rg-1"),
+            json=mb_body_with_counts(*mb_entries),
+        )
+        responses.add(
+            responses.GET,
+            DISCOGS_RELEASE.format("123"),
+            json=discogs_body(
+                genres=["Rock"], styles=["Indie Rock", "Post-Rock", "Art Rock"]
+            ),
+        )
+        monkeypatch.setattr(Item, "try_write", lambda self, *a, **k: None)
+        album, _, _ = self._add_album_with_backdated_file(
+            mb_releasegroupid="rg-1", discogs_albumid="123"
+        )
+
+        self.genresync.sync_album(album)
+
+        album.load()
+        genres = list(album.genres)
+        for discogs_genre in ("Rock", "Indie Rock", "Post-Rock", "Art Rock"):
+            assert discogs_genre in genres
+        mb_contributed = [g for g in genres if g.startswith("Mbgenre")]
+        assert len(mb_contributed) == 15
 
     @responses.activate
     def test_sync_album_dry_run_does_not_write(self):

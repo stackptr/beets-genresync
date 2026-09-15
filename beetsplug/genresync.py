@@ -20,6 +20,12 @@ USER_AGENT = "beets-genresync/0.1 ( https://github.com/stackptr/beets-genresync 
 # cased, so this only matters for MB-sourced names.
 MUSICBRAINZ_ACRONYMS = frozenset({"idm", "edm", "aor", "uk", "us"})
 
+# Some releases carry dozens of low-vote MusicBrainz folksonomy tags, which
+# swamps the handful of genres that actually have consensus behind them.
+# Discogs' genre/style fields are curated rather than voted, so they're not
+# subject to this and stay uncapped.
+MUSICBRAINZ_GENRE_LIMIT = 15
+
 
 class GenreSyncPlugin(BeetsPlugin):
     def __init__(self):
@@ -101,21 +107,30 @@ class GenreSyncPlugin(BeetsPlugin):
                 os.utime(item.path, (stat.st_atime, stat.st_mtime))
 
     def _musicbrainz_genres(self, album) -> tuple[list[str], bool]:
-        names: list[str] = []
+        votes: dict[str, int] = {}
         ok = True
         if album.mb_albumid:
-            release_names, release_ok = self._mb_genre_names(
+            release_genres, release_ok = self._mb_genre_names(
                 "release", album.mb_albumid
             )
-            names += release_names
             ok = ok and release_ok
+            self._tally_votes(votes, release_genres)
         if album.mb_releasegroupid:
-            rg_names, rg_ok = self._mb_genre_names(
+            rg_genres, rg_ok = self._mb_genre_names(
                 "release-group", album.mb_releasegroupid
             )
-            names += rg_names
             ok = ok and rg_ok
-        return self._dedupe(self._title_case_genre(name) for name in names), ok
+            self._tally_votes(votes, rg_genres)
+
+        ranked = sorted(votes, key=votes.__getitem__, reverse=True)
+        return ranked[:MUSICBRAINZ_GENRE_LIMIT], ok
+
+    def _tally_votes(
+        self, votes: dict[str, int], genres: list[tuple[str, int]]
+    ) -> None:
+        for name, count in genres:
+            title = self._title_case_genre(name)
+            votes[title] = max(votes.get(title, 0), count)
 
     @staticmethod
     def _title_case_genre(name: str) -> str:
@@ -124,7 +139,9 @@ class GenreSyncPlugin(BeetsPlugin):
             for word in name.strip().split(" ")
         )
 
-    def _mb_genre_names(self, entity: str, mbid: str) -> tuple[list[str], bool]:
+    def _mb_genre_names(
+        self, entity: str, mbid: str
+    ) -> tuple[list[tuple[str, int]], bool]:
         url = MUSICBRAINZ_URL.format(entity=entity, mbid=mbid)
 
         for attempt in range(MUSICBRAINZ_MAX_RETRIES + 1):
@@ -169,7 +186,11 @@ class GenreSyncPlugin(BeetsPlugin):
                 return [], False
 
             genre_list = response.json().get("genres", [])
-            return [g["name"] for g in genre_list if g.get("name")], True
+            return [
+                (g["name"], g.get("count", 0))
+                for g in genre_list
+                if g.get("name")
+            ], True
 
         return [], False
 
