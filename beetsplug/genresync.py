@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Iterable
 
@@ -13,6 +14,14 @@ MUSICBRAINZ_URL = "https://musicbrainz.org/ws/2/{entity}/{mbid}"
 MUSICBRAINZ_MIN_INTERVAL = 1.0
 MUSICBRAINZ_MAX_RETRIES = 3
 USER_AGENT = "beets-genresync/0.1 ( https://github.com/stackptr/beets-genresync )"
+
+# MBIDs are always UUIDs. Some albums end up with a non-MusicBrainz id (e.g.
+# a Discogs release id) stored in mb_albumid/mb_releasegroupid by whatever
+# imported them -- catch that before wasting a request on a guaranteed 400.
+MUSICBRAINZ_MBID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    re.IGNORECASE,
+)
 
 # MusicBrainz stores genre names lowercase (e.g. "idm", "uk garage"); a plain
 # str.title() call mangles acronyms into "Idm"/"Uk Garage" instead of the
@@ -109,21 +118,29 @@ class GenreSyncPlugin(BeetsPlugin):
     def _musicbrainz_genres(self, album) -> tuple[list[str], bool]:
         votes: dict[str, int] = {}
         ok = True
-        if album.mb_albumid:
-            release_genres, release_ok = self._mb_genre_names(
-                "release", album.mb_albumid
-            )
-            ok = ok and release_ok
-            self._tally_votes(votes, release_genres)
-        if album.mb_releasegroupid:
-            rg_genres, rg_ok = self._mb_genre_names(
-                "release-group", album.mb_releasegroupid
-            )
-            ok = ok and rg_ok
-            self._tally_votes(votes, rg_genres)
+        for entity, mbid in (
+            ("release", album.mb_albumid),
+            ("release-group", album.mb_releasegroupid),
+        ):
+            if not mbid:
+                continue
+            if not self._is_valid_mbid(mbid):
+                self._log.warning(
+                    "MusicBrainz {0} id {1!r} is not a valid MBID, skipping",
+                    entity,
+                    mbid,
+                )
+                continue
+            genres, entry_ok = self._mb_genre_names(entity, mbid)
+            ok = ok and entry_ok
+            self._tally_votes(votes, genres)
 
         ranked = sorted(votes, key=votes.__getitem__, reverse=True)
         return ranked[:MUSICBRAINZ_GENRE_LIMIT], ok
+
+    @staticmethod
+    def _is_valid_mbid(value: str) -> bool:
+        return bool(MUSICBRAINZ_MBID_RE.fullmatch(value))
 
     def _tally_votes(
         self, votes: dict[str, int], genres: list[tuple[str, int]]
@@ -187,9 +204,7 @@ class GenreSyncPlugin(BeetsPlugin):
 
             genre_list = response.json().get("genres", [])
             return [
-                (g["name"], g.get("count", 0))
-                for g in genre_list
-                if g.get("name")
+                (g["name"], g.get("count", 0)) for g in genre_list if g.get("name")
             ], True
 
         return [], False

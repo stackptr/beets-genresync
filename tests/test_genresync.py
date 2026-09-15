@@ -15,6 +15,9 @@ MB_RELEASE = "https://musicbrainz.org/ws/2/release/{0}"
 MB_RELEASE_GROUP = "https://musicbrainz.org/ws/2/release-group/{0}"
 DISCOGS_RELEASE = "https://api.discogs.com/releases/{0}"
 
+RELEASE_MBID = "11111111-1111-1111-1111-111111111111"
+RELEASE_GROUP_MBID = "22222222-2222-2222-2222-222222222222"
+
 
 def mb_body(*names):
     return {"genres": [{"name": n} for n in names]}
@@ -57,6 +60,21 @@ class TestTitleCaseGenre:
         assert GenreSyncPlugin._title_case_genre("deep house") == "Deep House"
 
 
+class TestIsValidMbid:
+    def test_accepts_real_mbid(self):
+        assert GenreSyncPlugin._is_valid_mbid("e75c0549-ad55-39e3-8025-c72c5d4a3c5d")
+
+    def test_accepts_uppercase_mbid(self):
+        assert GenreSyncPlugin._is_valid_mbid("E75C0549-AD55-39E3-8025-C72C5D4A3C5D")
+
+    def test_rejects_numeric_id(self):
+        # e.g. a Discogs release id that ended up in mb_albumid
+        assert not GenreSyncPlugin._is_valid_mbid("31606486")
+
+    def test_rejects_empty_string(self):
+        assert not GenreSyncPlugin._is_valid_mbid("")
+
+
 class TestGenreSync(PluginTestHelper):
     plugin = "genresync"
 
@@ -67,14 +85,19 @@ class TestGenreSync(PluginTestHelper):
     @responses.activate
     def test_musicbrainz_merges_release_and_release_group(self):
         responses.add(
-            responses.GET, MB_RELEASE.format("rel-1"), json=mb_body("rock")
+            responses.GET,
+            MB_RELEASE.format(RELEASE_MBID),
+            json=mb_body("rock"),
         )
         responses.add(
             responses.GET,
-            MB_RELEASE_GROUP.format("rg-1"),
+            MB_RELEASE_GROUP.format(RELEASE_GROUP_MBID),
             json=mb_body("indie rock", "rock"),
         )
-        album = self.add_album(mb_albumid="rel-1", mb_releasegroupid="rg-1")
+        album = self.add_album(
+            mb_albumid=RELEASE_MBID,
+            mb_releasegroupid=RELEASE_GROUP_MBID,
+        )
 
         names, ok = self.genresync._musicbrainz_genres(album)
 
@@ -84,9 +107,11 @@ class TestGenreSync(PluginTestHelper):
     @responses.activate
     def test_musicbrainz_preserves_acronym_casing(self):
         responses.add(
-            responses.GET, MB_RELEASE_GROUP.format("rg-1"), json=mb_body("idm")
+            responses.GET,
+            MB_RELEASE_GROUP.format(RELEASE_GROUP_MBID),
+            json=mb_body("idm"),
         )
-        album = self.add_album(mb_releasegroupid="rg-1")
+        album = self.add_album(mb_releasegroupid=RELEASE_GROUP_MBID)
 
         names, _ = self.genresync._musicbrainz_genres(album)
 
@@ -96,10 +121,10 @@ class TestGenreSync(PluginTestHelper):
     def test_musicbrainz_ranks_by_vote_count(self):
         responses.add(
             responses.GET,
-            MB_RELEASE_GROUP.format("rg-1"),
+            MB_RELEASE_GROUP.format(RELEASE_GROUP_MBID),
             json=mb_body_with_counts(("rock", 2), ("electronic", 10), ("pop", 5)),
         )
-        album = self.add_album(mb_releasegroupid="rg-1")
+        album = self.add_album(mb_releasegroupid=RELEASE_GROUP_MBID)
 
         names, ok = self.genresync._musicbrainz_genres(album)
 
@@ -111,10 +136,10 @@ class TestGenreSync(PluginTestHelper):
         entries = [(f"genre{i}", i) for i in range(1, 21)]  # counts 1..20
         responses.add(
             responses.GET,
-            MB_RELEASE_GROUP.format("rg-1"),
+            MB_RELEASE_GROUP.format(RELEASE_GROUP_MBID),
             json=mb_body_with_counts(*entries),
         )
-        album = self.add_album(mb_releasegroupid="rg-1")
+        album = self.add_album(mb_releasegroupid=RELEASE_GROUP_MBID)
 
         names, ok = self.genresync._musicbrainz_genres(album)
 
@@ -125,11 +150,17 @@ class TestGenreSync(PluginTestHelper):
 
     @responses.activate
     def test_musicbrainz_retries_503_then_succeeds(self):
-        responses.add(responses.GET, MB_RELEASE.format("rel-1"), status=503)
         responses.add(
-            responses.GET, MB_RELEASE.format("rel-1"), json=mb_body("rock")
+            responses.GET,
+            MB_RELEASE.format(RELEASE_MBID),
+            status=503,
         )
-        album = self.add_album(mb_albumid="rel-1")
+        responses.add(
+            responses.GET,
+            MB_RELEASE.format(RELEASE_MBID),
+            json=mb_body("rock"),
+        )
+        album = self.add_album(mb_albumid=RELEASE_MBID)
 
         names, ok = self.genresync._musicbrainz_genres(album)
 
@@ -140,13 +171,15 @@ class TestGenreSync(PluginTestHelper):
     def test_musicbrainz_retries_connection_error_then_succeeds(self):
         responses.add(
             responses.GET,
-            MB_RELEASE.format("rel-1"),
+            MB_RELEASE.format(RELEASE_MBID),
             body=RequestsConnectionError("connection reset"),
         )
         responses.add(
-            responses.GET, MB_RELEASE.format("rel-1"), json=mb_body("rock")
+            responses.GET,
+            MB_RELEASE.format(RELEASE_MBID),
+            json=mb_body("rock"),
         )
-        album = self.add_album(mb_albumid="rel-1")
+        album = self.add_album(mb_albumid=RELEASE_MBID)
 
         names, ok = self.genresync._musicbrainz_genres(album)
 
@@ -156,8 +189,12 @@ class TestGenreSync(PluginTestHelper):
     @responses.activate
     def test_musicbrainz_gives_up_after_max_retries(self):
         for _ in range(4):
-            responses.add(responses.GET, MB_RELEASE.format("rel-1"), status=503)
-        album = self.add_album(mb_albumid="rel-1")
+            responses.add(
+                responses.GET,
+                MB_RELEASE.format(RELEASE_MBID),
+                status=503,
+            )
+        album = self.add_album(mb_albumid=RELEASE_MBID)
 
         names, ok = self.genresync._musicbrainz_genres(album)
 
@@ -170,6 +207,38 @@ class TestGenreSync(PluginTestHelper):
         names, ok = self.genresync._musicbrainz_genres(album)
 
         assert (names, ok) == ([], True)
+
+    @responses.activate
+    def test_musicbrainz_skips_invalid_mbid_without_a_request(self, caplog):
+        # A non-UUID id (e.g. a Discogs id stored in mb_albumid by whatever
+        # imported the album) must not trigger an HTTP request at all --
+        # responses raises if this fires against an unregistered URL.
+        album = self.add_album(mb_albumid="31606486")
+
+        names, ok = self.genresync._musicbrainz_genres(album)
+
+        assert (names, ok) == ([], True)
+        assert any(
+            "is not a valid MBID" in r.message and r.levelname == "WARNING"
+            for r in caplog.records
+        )
+
+    @responses.activate
+    def test_musicbrainz_uses_valid_id_when_the_other_is_invalid(self):
+        responses.add(
+            responses.GET,
+            MB_RELEASE_GROUP.format(RELEASE_GROUP_MBID),
+            json=mb_body("rock"),
+        )
+        album = self.add_album(
+            mb_albumid="31606486",
+            mb_releasegroupid=RELEASE_GROUP_MBID,
+        )
+
+        names, ok = self.genresync._musicbrainz_genres(album)
+
+        assert ok is True
+        assert names == ["Rock"]
 
     @responses.activate
     def test_discogs_returns_genres_and_styles(self):
@@ -215,8 +284,12 @@ class TestGenreSync(PluginTestHelper):
     @responses.activate
     def test_sync_album_logs_warning_on_failed_lookup(self, caplog):
         for _ in range(4):
-            responses.add(responses.GET, MB_RELEASE.format("rel-1"), status=503)
-        album = self.add_album(mb_albumid="rel-1")
+            responses.add(
+                responses.GET,
+                MB_RELEASE.format(RELEASE_MBID),
+                status=503,
+            )
+        album = self.add_album(mb_albumid=RELEASE_MBID)
 
         self.genresync.sync_album(album)
 
@@ -229,11 +302,12 @@ class TestGenreSync(PluginTestHelper):
     def test_sync_album_unchanged_ignores_order(self, caplog):
         responses.add(
             responses.GET,
-            MB_RELEASE_GROUP.format("rg-1"),
+            MB_RELEASE_GROUP.format(RELEASE_GROUP_MBID),
             json=mb_body("rock", "indie rock"),
         )
         album = self.add_album(
-            mb_releasegroupid="rg-1", genres=["Indie Rock", "Rock"]
+            mb_releasegroupid=RELEASE_GROUP_MBID,
+            genres=["Indie Rock", "Rock"],
         )
 
         self.genresync.sync_album(album)
@@ -245,7 +319,7 @@ class TestGenreSync(PluginTestHelper):
         mb_entries = [(f"mbgenre{i}", i) for i in range(1, 21)]  # counts 1..20
         responses.add(
             responses.GET,
-            MB_RELEASE_GROUP.format("rg-1"),
+            MB_RELEASE_GROUP.format(RELEASE_GROUP_MBID),
             json=mb_body_with_counts(*mb_entries),
         )
         responses.add(
@@ -257,7 +331,8 @@ class TestGenreSync(PluginTestHelper):
         )
         monkeypatch.setattr(Item, "try_write", lambda self, *a, **k: None)
         album, _, _ = self._add_album_with_backdated_file(
-            mb_releasegroupid="rg-1", discogs_albumid="123"
+            mb_releasegroupid=RELEASE_GROUP_MBID,
+            discogs_albumid="123",
         )
 
         self.genresync.sync_album(album)
@@ -272,9 +347,11 @@ class TestGenreSync(PluginTestHelper):
     @responses.activate
     def test_sync_album_dry_run_does_not_write(self):
         responses.add(
-            responses.GET, MB_RELEASE_GROUP.format("rg-1"), json=mb_body("rock")
+            responses.GET,
+            MB_RELEASE_GROUP.format(RELEASE_GROUP_MBID),
+            json=mb_body("rock"),
         )
-        album = self.add_album(mb_releasegroupid="rg-1")
+        album = self.add_album(mb_releasegroupid=RELEASE_GROUP_MBID)
 
         self.genresync.sync_album(album, dry_run=True)
 
@@ -305,11 +382,13 @@ class TestGenreSync(PluginTestHelper):
     @responses.activate
     def test_sync_album_writes_and_preserves_mtime_by_default(self, monkeypatch):
         responses.add(
-            responses.GET, MB_RELEASE_GROUP.format("rg-1"), json=mb_body("rock")
+            responses.GET,
+            MB_RELEASE_GROUP.format(RELEASE_GROUP_MBID),
+            json=mb_body("rock"),
         )
         monkeypatch.setattr(Item, "try_write", self._bump_mtime_try_write)
         album, item, old_time = self._add_album_with_backdated_file(
-            mb_releasegroupid="rg-1"
+            mb_releasegroupid=RELEASE_GROUP_MBID
         )
 
         self.genresync.sync_album(album)
@@ -323,11 +402,13 @@ class TestGenreSync(PluginTestHelper):
     @responses.activate
     def test_sync_album_update_mtime_true_allows_bump(self, monkeypatch):
         responses.add(
-            responses.GET, MB_RELEASE_GROUP.format("rg-1"), json=mb_body("rock")
+            responses.GET,
+            MB_RELEASE_GROUP.format(RELEASE_GROUP_MBID),
+            json=mb_body("rock"),
         )
         monkeypatch.setattr(Item, "try_write", self._bump_mtime_try_write)
         album, item, old_time = self._add_album_with_backdated_file(
-            mb_releasegroupid="rg-1"
+            mb_releasegroupid=RELEASE_GROUP_MBID
         )
 
         self.config["genresync"]["update_mtime"] = True
