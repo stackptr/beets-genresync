@@ -14,6 +14,12 @@ MUSICBRAINZ_MIN_INTERVAL = 1.0
 MUSICBRAINZ_MAX_RETRIES = 3
 USER_AGENT = "beets-genresync/0.1 ( https://github.com/stackptr/beets-genresync )"
 
+# MusicBrainz stores genre names lowercase (e.g. "idm", "uk garage"); a plain
+# str.title() call mangles acronyms into "Idm"/"Uk Garage" instead of the
+# conventional "IDM"/"UK Garage". Discogs' equivalents are already correctly
+# cased, so this only matters for MB-sourced names.
+MUSICBRAINZ_ACRONYMS = frozenset({"idm", "edm", "aor", "uk", "us"})
+
 
 class GenreSyncPlugin(BeetsPlugin):
     def __init__(self):
@@ -109,7 +115,14 @@ class GenreSyncPlugin(BeetsPlugin):
             )
             names += rg_names
             ok = ok and rg_ok
-        return self._dedupe(name.title() for name in names), ok
+        return self._dedupe(self._title_case_genre(name) for name in names), ok
+
+    @staticmethod
+    def _title_case_genre(name: str) -> str:
+        return " ".join(
+            word.upper() if word.lower() in MUSICBRAINZ_ACRONYMS else word.title()
+            for word in name.strip().split(" ")
+        )
 
     def _mb_genre_names(self, entity: str, mbid: str) -> tuple[list[str], bool]:
         url = MUSICBRAINZ_URL.format(entity=entity, mbid=mbid)

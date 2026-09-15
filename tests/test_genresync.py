@@ -40,6 +40,19 @@ class TestDedupe:
         assert result == ["Jazz"]
 
 
+class TestTitleCaseGenre:
+    def test_preserves_known_acronyms(self):
+        assert GenreSyncPlugin._title_case_genre("idm") == "IDM"
+        assert GenreSyncPlugin._title_case_genre("edm") == "EDM"
+        assert GenreSyncPlugin._title_case_genre("aor") == "AOR"
+
+    def test_preserves_acronym_within_multi_word_name(self):
+        assert GenreSyncPlugin._title_case_genre("uk garage") == "UK Garage"
+
+    def test_title_cases_non_acronym_words_normally(self):
+        assert GenreSyncPlugin._title_case_genre("deep house") == "Deep House"
+
+
 class TestGenreSync(PluginTestHelper):
     plugin = "genresync"
 
@@ -63,6 +76,17 @@ class TestGenreSync(PluginTestHelper):
 
         assert ok is True
         assert names == ["Rock", "Indie Rock"]
+
+    @responses.activate
+    def test_musicbrainz_preserves_acronym_casing(self):
+        responses.add(
+            responses.GET, MB_RELEASE_GROUP.format("rg-1"), json=mb_body("idm")
+        )
+        album = self.add_album(mb_releasegroupid="rg-1")
+
+        names, _ = self.genresync._musicbrainz_genres(album)
+
+        assert names == ["IDM"]
 
     @responses.activate
     def test_musicbrainz_retries_503_then_succeeds(self):
